@@ -11,7 +11,7 @@ RUN dotnet publish src/EdgePasswordBulkManager/EdgePasswordBulkManager.csproj \
     -c Release -o /app/publish /p:UseAppHost=false
 
 # ---- Runtime stage ----
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8080 \
