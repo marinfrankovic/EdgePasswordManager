@@ -1,5 +1,9 @@
 # Edge Password Bulk Manager
 
+[![Build and push Docker image](https://github.com/marinfrankovic/EdgePasswordManager/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/marinfrankovic/EdgePasswordManager/actions/workflows/docker-publish.yml)
+[![Docker Hub](https://img.shields.io/docker/pulls/mfrankovic/edge-password-manager?logo=docker)](https://hub.docker.com/r/mfrankovic/edge-password-manager)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+
 A local, containerized admin tool for **bulk-managing the passwords Microsoft Edge already has saved** for your Windows user. It lets you search, filter, categorize, multi-select and **bulk-delete** saved logins — especially useful for wiping out large groups of entries by site, category (e.g. adult sites), duplicates, or an uploaded domain list.
 
 > This is **not** a password manager. It creates no vault, no cloud sync, and no separate password store. It operates directly on Edge's own local `Login Data` database and only ever reads/deletes **metadata** rows. It never decrypts, reveals, or exports passwords.
@@ -112,6 +116,33 @@ cd src/EdgePasswordBulkManager
 dotnet run
 ```
 Development config reads Edge from `%LOCALAPPDATA%\Microsoft\Edge\User Data` and writes artifacts under `./data`.
+
+---
+
+## Usage walkthrough
+
+A typical "clean out a category of saved logins" session:
+
+1. **Close Microsoft Edge completely.** Deletes and restores need exclusive write access to the DB. Check Task Manager for lingering `msedge.exe` processes. (Listing/filtering works even while Edge is open — it reads a copy.)
+2. **Open the UI** at http://localhost:8088.
+3. **Pick a profile** in the left panel (e.g. *Default*), or tick **All profiles (aggregate)** to work across every profile at once.
+4. **Let the lists load.** The status bar shows totals; the *Category lists* panel shows how many domains are loaded and when they last refreshed. Hit **Refresh lists now** to pull the latest blocklists on demand.
+5. **Narrow it down** with the filters: free text, site/realm substring, username substring, **Category** (e.g. `adult`), or *Duplicates only*.
+6. **Select what to remove** using the selection helpers:
+   - **Select adult sites** / **Select any flagged** — everything matched by your category lists.
+   - **Select duplicates (keep newest)** — every dupe except the most-recently-used per site+username.
+   - **Select never-used** / **Select insecure (HTTP)**.
+   - **Select by uploaded domain list** — upload your own list of domains to target.
+   - Or tick rows manually / use **Select visible**, **Invert**.
+7. **(Optional) Preview** — click **Delete selected**, then **Dry-run report** to see exactly how many rows would match before committing.
+8. **Delete** — confirm in the dialog (large deletes require typing `DELETE <count>`). A timestamped DB backup is taken automatically first, and the delete runs in a single transaction.
+9. **Changed your mind?** Open **Backups & restore** → **Undo last delete** (restores the newest backup) or **Restore from backup…** to pick any snapshot. A safety backup of the current state is taken before restoring.
+10. **Export a record** anytime with **Export CSV** (metadata only — never passwords).
+
+Tips:
+- Toolbar **Refresh** re-scans profiles and reloads the current one.
+- Use **Read-only mode** (`READ_ONLY=true` in `.env`) for a safe look-but-don't-touch deployment.
+- The **Schema / debug** panel shows the detected `logins` columns and a live audit trail.
 
 ---
 
