@@ -50,3 +50,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Prepare Docker Hub overview (ASCII-safe copy of README)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          sed -e 's/✅/yes/g; s/❌/no/g; s/⚠/!/g; s/●/*/g' README.md \
+            | tr -cd '\11\12\15\40-\176' > hub-readme.md
+
+      - name: Sync Docker Hub description & overview
+        if: github.ref == 'refs/heads/main'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          short-description: "Local Dockerized tool to bulk-manage passwords saved in Microsoft Edge - metadata only, no vault"
+          readme-filepath: ./hub-readme.md
