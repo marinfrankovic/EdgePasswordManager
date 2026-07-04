@@ -1,0 +1,16 @@
+## .NET build output
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+## Local artifacts
+data/
+*.user
+.vs/
+
+## Local environment (contains machine-specific paths)
+.env
+
+## Rider / VS Code
+.idea/

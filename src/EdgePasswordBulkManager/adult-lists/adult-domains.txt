@@ -1,0 +1,50 @@
+# Adult-site domain blocklist (starter list)
+# ------------------------------------------------------------------
+# Used by Edge Password Bulk Manager to flag saved logins whose domain
+# is a known adult site, so they can be filtered / selected / bulk-deleted.
+#
+# Format: one registrable domain per line. Subdomains match automatically
+# (e.g. a listed "example.com" also matches "videos.example.com").
+# Hosts-file lines ("0.0.0.0 example.com") and "#" comments are also accepted.
+#
+# This is only a SMALL starter set. For comprehensive coverage, drop a full
+# adult/porn blocklist into ./data/lists/ (mounted at /data/lists) — for example
+# the "porn" hosts list from https://github.com/blocklistproject/Lists or the
+# adult category from https://github.com/StevenBlack/hosts. See the README.
+# ------------------------------------------------------------------
+pornhub.com
+xvideos.com
+xnxx.com
+xhamster.com
+redtube.com
+youporn.com
+tube8.com
+spankbang.com
+youjizz.com
+brazzers.com
+onlyfans.com
+fansly.com
+chaturbate.com
+myfreecams.com
+livejasmin.com
+stripchat.com
+bongacams.com
+cam4.com
+adultfriendfinder.com
+ashleymadison.com
+porn.com
+sex.com
+xxx.com
+hentaihaven.xxx
+nhentai.net
+rule34.xxx
+e-hentai.org
+motherless.com
+eporner.com
+txxx.com
+hclips.com
+upornia.com
+gotporn.com
+porntrex.com
+fapello.com
+erome.com

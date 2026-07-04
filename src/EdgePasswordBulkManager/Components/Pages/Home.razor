@@ -1,0 +1,664 @@
+@page "/"
+@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
+@inject PasswordManagerState State
+@inject BackupExportService BackupSvc
+@inject RestoreService RestoreSvc
+@inject ListRefreshService RefreshSvc
+@inject CategoryService Categories
+@inject AuditLog Audit
+@inject Microsoft.Extensions.Options.IOptions<AppOptions> Options
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>Edge Password Bulk Manager</PageTitle>
+
+<header class="topbar">
+    <div class="brand">
+        <span class="logo">🔑</span>
+        <div>
+            <h1>Edge Password Bulk Manager</h1>
+            <span class="subtitle">Edge password administration only — no vault, no cloud, no password reveal.</span>
+        </div>
+    </div>
+    <div class="toolbar">
+        <button class="btn" @onclick="RefreshAsync" disabled="@State.IsLoading">↻ Refresh</button>
+        <button class="btn" @onclick="() => State.SelectVisible()" disabled="@NoData">☑ Select visible</button>
+        <button class="btn" @onclick="() => State.ClearSelection()" disabled="@NoData">☐ Clear</button>
+        <button class="btn" @onclick="() => State.InvertSelection()" disabled="@NoData">⇄ Invert</button>
+        <button class="btn" @onclick="ExportCsvAsync" disabled="@NoData">⬇ Export CSV</button>
+        <button class="btn" @onclick="BackupAsync" disabled="@(NoData || State.Aggregate || ReadOnly)">🗄 Backup DB</button>
+        <button class="btn btn-danger" @onclick="OpenDeleteModal" disabled="@(State.SelectedCount == 0 || ReadOnly)">
+            🗑 Delete selected (@State.SelectedCount)
+        </button>
+        <button class="btn btn-ghost" @onclick="ToggleThemeAsync">@(_dark ? "☀" : "🌙")</button>
+    </div>
+</header>
+
+@if (ReadOnly)
+{
+    <div class="banner banner-warn">Read-only mode is enabled — delete, backup and restore writes are disabled.</div>
+}
+<div class="banner banner-info">
+    ⚠ Close Microsoft Edge completely before deleting or restoring. Editing the Login Data database while Edge is running may fail or corrupt data.
+</div>
+
+<div class="layout">
+    <aside class="sidebar">
+        <section class="panel">
+            <h2>Profile</h2>
+            <select class="input" @onchange="OnProfileChanged" disabled="@State.Aggregate">
+                <option value="">-- select a profile --</option>
+                @foreach (var p in State.Profiles)
+                {
+                    <option value="@p.Key" selected="@(State.SelectedProfile?.Key == p.Key)">@p.Label</option>
+                }
+            </select>
+            <label class="check">
+                <input type="checkbox" checked="@State.Aggregate" @onchange="OnAggregateChanged" />
+                <span>All profiles (aggregate)</span>
+            </label>
+            @if (State.Profiles.Count == 0)
+            {
+                <p class="muted small">No Edge profiles found. Check the mounted <code>User Data</code> path.</p>
+            }
+            @if (State.LoadedFromCopy)
+            {
+                <p class="muted small">Loaded from a working copy (live DB in use).</p>
+            }
+        </section>
+
+        <section class="panel">
+            <h2>Filters</h2>
+            <label class="field">
+                <span>Free text (URL / realm / user)</span>
+                <input class="input" @bind="State.SearchText" @bind:event="oninput" placeholder="search…" />
+            </label>
+            <label class="field">
+                <span>Site / realm contains</span>
+                <input class="input" @bind="State.SiteFilter" @bind:event="oninput" placeholder="e.g. example.com" />
+            </label>
+            <label class="field">
+                <span>Username contains</span>
+                <input class="input" @bind="State.UsernameFilter" @bind:event="oninput" placeholder="e.g. jsmith" />
+            </label>
+            <label class="field">
+                <span>Category</span>
+                <select class="input" @bind="State.CategoryFilter" @bind:event="onchange">
+                    <option value="">(all)</option>
+                    <option value="__any__">(any flagged)</option>
+                    @foreach (var c in Categories.Categories)
+                    {
+                        <option value="@c">@c (@Categories.CountFor(c).ToString("N0"))</option>
+                    }
+                </select>
+            </label>
+            <label class="check">
+                <input type="checkbox" @bind="State.DuplicatesOnly" @bind:event="onchange" />
+                <span>Duplicates only</span>
+            </label>
+        </section>
+
+        <section class="panel">
+            <h2>Selection helpers</h2>
+            <button class="btn full" @onclick="SelectAdult" disabled="@NoData">Select adult sites</button>
+            <button class="btn full" @onclick="SelectAnyFlagged" disabled="@NoData">Select any flagged</button>
+            <button class="btn full" @onclick="SelectDuplicateExtras" disabled="@NoData">Select duplicates (keep newest)</button>
+            <button class="btn full" @onclick="() => State.SelectNeverUsed()" disabled="@NoData">Select never-used</button>
+            <button class="btn full" @onclick="() => State.SelectInsecure()" disabled="@NoData">Select insecure (HTTP)</button>
+            <label class="field" style="margin-top:8px;">
+                <span>Select by uploaded domain list</span>
+                <InputFile OnChange="OnSelectDomainsUpload" class="input" />
+            </label>
+        </section>
+
+        <section class="panel">
+            <h2 class="collapsible" @onclick="() => _showLists = !_showLists">
+                Category lists @(_showLists ? "▾" : "▸")
+            </h2>
+            @if (_showLists)
+            {
+                <p class="small"><strong>@Categories.TotalDomains.ToString("N0")</strong> domains across @Categories.Categories.Count category(ies).</p>
+                <p class="small muted">Last refresh: @(_refreshLabel())</p>
+                <button class="btn full" @onclick="RefreshListsAsync" disabled="@_refreshBusy">
+                    @(_refreshBusy ? "Refreshing…" : "Refresh lists now")
+                </button>
+                <label class="field" style="margin-top:8px;">
+                    <span>Upload list into category</span>
+                    <input class="input" @bind="_uploadCategory" placeholder="category (e.g. adult)" />
+                    <InputFile OnChange="OnCategoryUpload" class="input" style="margin-top:6px;" />
+                </label>
+                @if (!string.IsNullOrEmpty(_listMsg))
+                {
+                    <p class="small muted">@_listMsg</p>
+                }
+            }
+        </section>
+
+        <section class="panel">
+            <h2 class="collapsible" @onclick="() => _showBackups = !_showBackups">
+                Backups &amp; restore @(_showBackups ? "▾" : "▸")
+            </h2>
+            @if (_showBackups)
+            {
+                @if (State.Aggregate || State.SelectedProfile is null)
+                {
+                    <p class="small muted">Select a single profile to view and restore backups.</p>
+                }
+                else
+                {
+                    <button class="btn full" @onclick="UndoLastDeleteAsync" disabled="@ReadOnly">↩ Undo last delete (restore latest)</button>
+                    <button class="btn full" @onclick="OpenRestoreModal">🗄 Restore from backup…</button>
+                }
+            }
+        </section>
+
+        <section class="panel">
+            <h2 class="collapsible" @onclick="() => _showDebug = !_showDebug">
+                Schema / debug @(_showDebug ? "▾" : "▸")
+            </h2>
+            @if (_showDebug)
+            {
+                <div class="debug">
+                    @if (State.Schema is not null)
+                    {
+                        <p class="small"><strong>Row id column:</strong> @(State.Schema.HasIdColumn ? "yes (id)" : "no (composite key)")</p>
+                        <p class="small"><strong>logins columns (@State.Schema.Columns.Count):</strong></p>
+                        <div class="cols">@string.Join(", ", State.Schema.Columns)</div>
+                    }
+                    <p class="small"><strong>Recent actions:</strong></p>
+                    <ul class="log">
+                        @foreach (var line in Audit.Recent.Take(12))
+                        {
+                            <li>@line</li>
+                        }
+                    </ul>
+                </div>
+            }
+        </section>
+    </aside>
+
+    <main class="content">
+        @if (State.IsLoading)
+        {
+            <div class="loading"><div class="spinner"></div><span>Loading passwords…</span></div>
+        }
+        else if (NoData)
+        {
+            <div class="empty">Select an Edge profile (or "All profiles") to list saved logins.</div>
+        }
+        else
+        {
+            var rows = State.Visible();
+            <div class="grid-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th class="chk"><input type="checkbox" @onchange="ToggleAllVisible" checked="@AllVisibleSelected" /></th>
+                            @if (State.Aggregate)
+                            {
+                                <th @onclick="() => State.SetSort(SortColumn.Profile)">Profile @Sort(SortColumn.Profile)</th>
+                            }
+                            <th @onclick="() => State.SetSort(SortColumn.Origin)">Site / origin URL @Sort(SortColumn.Origin)</th>
+                            <th @onclick="() => State.SetSort(SortColumn.Realm)">Sign-on realm @Sort(SortColumn.Realm)</th>
+                            <th @onclick="() => State.SetSort(SortColumn.Username)">Username @Sort(SortColumn.Username)</th>
+                            <th @onclick="() => State.SetSort(SortColumn.Created)">Created @Sort(SortColumn.Created)</th>
+                            <th @onclick="() => State.SetSort(SortColumn.LastUsed)">Last used @Sort(SortColumn.LastUsed)</th>
+                            <th class="num" @onclick="() => State.SetSort(SortColumn.TimesUsed)">Used @Sort(SortColumn.TimesUsed)</th>
+                            <th class="actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in rows)
+                        {
+                            <tr @key="e.RowKey" class="@(e.Selected ? "sel" : null)">
+                                <td class="chk"><input type="checkbox" checked="@e.Selected" @onchange="() => ToggleRow(e)" /></td>
+                                @if (State.Aggregate)
+                                {
+                                    <td class="date">@e.ProfileLabel</td>
+                                }
+                                <td class="url" title="@e.OriginUrl">
+                                    @e.OriginUrl
+                                    @foreach (var c in e.Categories)
+                                    {
+                                        <span class="tag cat">@c</span>
+                                    }
+                                    @if (e.IsInsecure)
+                                    {
+                                        <span class="tag insecure">http</span>
+                                    }
+                                    @if (e.IsDuplicate)
+                                    {
+                                        <span class="tag dup">dup</span>
+                                    }
+                                </td>
+                                <td class="url" title="@e.SignonRealm">@e.SignonRealm</td>
+                                <td>@e.Username</td>
+                                <td class="date">@Fmt(e.DateCreated)</td>
+                                <td class="date">@Fmt(e.DateLastUsed)</td>
+                                <td class="num">@e.TimesUsed</td>
+                                <td class="actions">
+                                    <button class="mini" title="View metadata" @onclick="() => _metaEntry = e">ℹ</button>
+                                    <button class="mini" title="Copy URL" @onclick="() => CopyAsync(e.OriginUrl)">🔗</button>
+                                    <button class="mini" title="Copy username" @onclick="() => CopyAsync(e.Username)">👤</button>
+                                </td>
+                            </tr>
+                        }
+                        @if (rows.Count == 0)
+                        {
+                            <tr><td colspan="9" class="empty-row">No entries match the current filters.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </main>
+</div>
+
+<footer class="statusbar">
+    <span><strong>Profile:</strong> @(State.Aggregate ? "All profiles" : State.SelectedProfile?.Label ?? "—")</span>
+    <span><strong>Total:</strong> @State.TotalCount</span>
+    <span><strong>Filtered:</strong> @State.FilteredCount</span>
+    <span><strong>Selected:</strong> @State.SelectedCount</span>
+    <span><strong>Adult:</strong> @State.AdultCount</span>
+    <span><strong>Dupes:</strong> @State.DuplicateCount</span>
+    @if (!string.IsNullOrEmpty(_status))
+    {
+        <span class="status-msg">@_status</span>
+    }
+</footer>
+
+@if (_metaEntry is not null)
+{
+    <div class="modal-backdrop" @onclick="() => _metaEntry = null">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>Entry metadata</h3>
+            <dl class="meta">
+                <dt>Profile</dt><dd>@_metaEntry.ProfileLabel</dd>
+                <dt>Origin URL</dt><dd>@_metaEntry.OriginUrl</dd>
+                <dt>Action URL</dt><dd>@_metaEntry.ActionUrl</dd>
+                <dt>Sign-on realm</dt><dd>@_metaEntry.SignonRealm</dd>
+                <dt>Username</dt><dd>@_metaEntry.Username</dd>
+                <dt>Normalized domain</dt><dd>@_metaEntry.NormalizedDomain</dd>
+                <dt>Categories</dt><dd>@(_metaEntry.Categories.Count == 0 ? "—" : string.Join(", ", _metaEntry.Categories))</dd>
+                <dt>Row id</dt><dd>@(_metaEntry.Id?.ToString() ?? "(composite key)")</dd>
+                <dt>Created</dt><dd>@Fmt(_metaEntry.DateCreated)</dd>
+                <dt>Last used</dt><dd>@Fmt(_metaEntry.DateLastUsed)</dd>
+                <dt>Times used</dt><dd>@_metaEntry.TimesUsed</dd>
+                <dt>Password</dt><dd class="muted">not accessible (app-bound encryption — reveal unsupported in Docker)</dd>
+            </dl>
+            <div class="modal-actions"><button class="btn" @onclick="() => _metaEntry = null">Close</button></div>
+        </div>
+    </div>
+}
+
+@if (_showDelete)
+{
+    var selected = State.SelectedEntries();
+    var large = selected.Count > Threshold;
+    <div class="modal-backdrop">
+        <div class="modal wide" @onclick:stopPropagation="true">
+            <h3>Delete @selected.Count saved login(s)</h3>
+            <p class="muted">A timestamped backup of each affected profile's Login Data DB is created automatically before deletion. Use "Undo last delete" or "Restore" to revert.</p>
+            <div class="preview">
+                <table class="grid compact">
+                    <thead><tr><th>Profile</th><th>Origin URL</th><th>Username</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in selected.Take(200))
+                        {
+                            <tr><td>@e.ProfileLabel</td><td class="url">@e.OriginUrl</td><td>@e.Username</td></tr>
+                        }
+                    </tbody>
+                </table>
+                @if (selected.Count > 200)
+                {
+                    <p class="small muted">…and @(selected.Count - 200) more.</p>
+                }
+            </div>
+            @if (_dryRun is not null)
+            {
+                <div class="banner @(_dryRun.FatalError is null ? "banner-info" : "banner-warn")">
+                    @(_dryRun.FatalError ?? $"Dry run: {_dryRun.SuccessCount} of {selected.Count} row(s) would be deleted ({_dryRun.FailureCount} not matched).")
+                </div>
+            }
+            @if (large)
+            {
+                <label class="field">
+                    <span class="danger-text">Large delete — type <code>DELETE @selected.Count</code> to confirm</span>
+                    <input class="input" @bind="_confirmText" @bind:event="oninput" placeholder="DELETE @selected.Count" />
+                </label>
+            }
+            <div class="modal-actions">
+                <button class="btn" @onclick="CloseDeleteModal" disabled="@_busy">Cancel</button>
+                <button class="btn" @onclick="DryRunAsync" disabled="@_busy">Dry-run report</button>
+                <button class="btn btn-danger" @onclick="ConfirmDeleteAsync" disabled="@(_busy || (large && _confirmText != $"DELETE {selected.Count}"))">
+                    @(_busy ? "Working…" : "Delete permanently")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_result is not null)
+{
+    <div class="modal-backdrop">
+        <div class="modal wide" @onclick:stopPropagation="true">
+            <h3>@(_result.Committed ? "Deletion complete" : "Deletion result")</h3>
+            @if (_result.FatalError is not null)
+            {
+                <div class="banner banner-warn">@_result.FatalError</div>
+            }
+            else
+            {
+                <div class="banner banner-info">Deleted @_result.TotalRowsAffected row(s). Success: @_result.SuccessCount, failed: @_result.FailureCount.</div>
+            }
+            @if (_result.BackupPaths.Count > 0)
+            {
+                <p class="small muted">Backups: @string.Join("; ", _result.BackupPaths)</p>
+            }
+            @if (_result.FailureCount > 0)
+            {
+                <div class="preview">
+                    <table class="grid compact">
+                        <thead><tr><th>Origin URL</th><th>Username</th><th>Result</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in _result.Rows.Where(r => !r.Success))
+                            {
+                                <tr><td class="url">@r.OriginUrl</td><td>@r.Username</td><td>@r.Error</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="modal-actions"><button class="btn" @onclick="() => _result = null">Close</button></div>
+        </div>
+    </div>
+}
+
+@if (_showRestore)
+{
+    <div class="modal-backdrop" @onclick="() => _showRestore = false">
+        <div class="modal wide" @onclick:stopPropagation="true">
+            <h3>Restore a backup</h3>
+            <p class="muted">Restoring overwrites the current Login Data DB. A safety backup of the current state is taken first. Close Edge before restoring.</p>
+            @if (_backups.Count == 0)
+            {
+                <p class="muted">No backups found for this profile yet.</p>
+            }
+            else
+            {
+                <div class="preview">
+                    <table class="grid compact">
+                        <thead><tr><th>When</th><th>Path</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var b in _backups)
+                            {
+                                <tr>
+                                    <td class="date">@b.When.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td class="url" title="@b.Path">@System.IO.Path.GetFileName(b.Path)</td>
+                                    <td><button class="btn btn-danger" @onclick="() => RestoreAsync(b)" disabled="@(_busy || !b.HasLoginData || ReadOnly)">Restore</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="modal-actions"><button class="btn" @onclick="() => _showRestore = false">Close</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _dark = true;
+    private bool _showDebug;
+    private bool _showLists = true;
+    private bool _showBackups;
+    private bool _showDelete;
+    private bool _showRestore;
+    private bool _busy;
+    private bool _refreshBusy;
+    private string _confirmText = string.Empty;
+    private string _uploadCategory = "adult";
+    private string? _status;
+    private string? _listMsg;
+    private LoginEntry? _metaEntry;
+    private DeleteResult? _dryRun;
+    private DeleteResult? _result;
+    private List<BackupInfo> _backups = new();
+
+    private bool ReadOnly => Options.Value.ReadOnlyMode;
+    private int Threshold => Options.Value.LargeDeleteThreshold;
+    private bool NoData => (!State.Aggregate && State.SelectedProfile is null) || State.IsLoading;
+    private bool AllVisibleSelected => State.Visible().Count > 0 && State.Visible().All(e => e.Selected);
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+        State.Refresh();
+    }
+
+    private async void OnStateChanged() => await InvokeAsync(StateHasChanged);
+
+    private async Task RefreshAsync()
+    {
+        State.Refresh();
+        if (State.Aggregate || State.SelectedProfile is not null)
+        {
+            await State.LoadAsync();
+        }
+        _status = "Refreshed.";
+    }
+
+    private async Task OnProfileChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString() ?? string.Empty;
+        _status = null;
+        if (!string.IsNullOrEmpty(key))
+        {
+            await State.SelectProfileAsync(key);
+        }
+    }
+
+    private async Task OnAggregateChanged(ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        await State.SetAggregateAsync(on);
+    }
+
+    private void ToggleRow(LoginEntry e)
+    {
+        e.Selected = !e.Selected;
+        State.NotifyChanged();
+    }
+
+    private void ToggleAllVisible(ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        foreach (var row in State.Visible()) row.Selected = on;
+        State.NotifyChanged();
+    }
+
+    private void SelectDuplicateExtras()
+    {
+        var n = State.SelectDuplicateExtras();
+        _status = $"Selected {n} duplicate(s) (kept newest per group).";
+    }
+
+    private void SelectAdult()
+    {
+        State.SelectByCategory("adult");
+        _status = "Selected adult-flagged entries.";
+    }
+
+    private void SelectAnyFlagged()
+    {
+        State.SelectByCategory("__any__");
+        _status = "Selected all flagged entries.";
+    }
+
+    private async Task OnSelectDomainsUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var s = e.File.OpenReadStream(maxAllowedSize: 104_857_600);
+            var n = await State.SelectByDomainsAsync(s);
+            _status = $"Selected {n} entr(y/ies) matching uploaded domain list.";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Upload failed: {ex.Message}";
+        }
+    }
+
+    private async Task OnCategoryUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var s = e.File.OpenReadStream(maxAllowedSize: 104_857_600);
+            var (added, total) = await State.ImportCategoryAsync(_uploadCategory, e.File.Name, s);
+            _listMsg = $"Imported {added:N0} domains into '{_uploadCategory}'. Total now {total:N0}.";
+        }
+        catch (Exception ex)
+        {
+            _listMsg = $"Import failed: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshListsAsync()
+    {
+        _refreshBusy = true;
+        try
+        {
+            var status = await RefreshSvc.RefreshNowAsync(force: true, CancellationToken.None);
+            State.ReclassifyAll();
+            _listMsg = $"Refresh: {status}";
+        }
+        finally { _refreshBusy = false; }
+    }
+
+    private void OpenDeleteModal()
+    {
+        _dryRun = null;
+        _confirmText = string.Empty;
+        _showDelete = true;
+    }
+
+    private void CloseDeleteModal()
+    {
+        _showDelete = false;
+        _dryRun = null;
+    }
+
+    private async Task DryRunAsync()
+    {
+        _busy = true;
+        try { _dryRun = await State.DeleteSelectedAsync(dryRun: true); }
+        finally { _busy = false; }
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        _busy = true;
+        try
+        {
+            var res = await State.DeleteSelectedAsync(dryRun: false);
+            _status = res.Committed
+                ? $"Deleted {res.TotalRowsAffected} entr(y/ies)."
+                : "Delete did not fully complete — see details.";
+            _result = res;
+            _showDelete = false;
+            _dryRun = null;
+            _confirmText = string.Empty;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var rows = State.SelectedEntries();
+        if (rows.Count == 0) rows = State.Visible().ToList();
+
+        var profile = State.SelectedProfile
+            ?? new EdgeProfile { Channel = "all", FolderName = "profiles", DisplayName = "All", LoginDataPath = "" };
+
+        var path = BackupSvc.ExportCsv(profile, rows);
+        var bytes = await File.ReadAllBytesAsync(path);
+        await JS.InvokeVoidAsync("epmDownload", Path.GetFileName(path), "text/csv", Convert.ToBase64String(bytes));
+        _status = $"Exported {rows.Count} row(s) → {path}";
+    }
+
+    private async Task BackupAsync()
+    {
+        if (State.SelectedProfile is null) return;
+        await Task.Yield();
+        var dir = BackupSvc.BackupLoginData(State.SelectedProfile);
+        _status = $"Backup created: {dir}";
+    }
+
+    private void OpenRestoreModal()
+    {
+        if (State.SelectedProfile is null) return;
+        _backups = RestoreSvc.ListBackups(State.SelectedProfile).ToList();
+        _showRestore = true;
+    }
+
+    private async Task UndoLastDeleteAsync()
+    {
+        if (State.SelectedProfile is null) return;
+        var latest = RestoreSvc.ListBackups(State.SelectedProfile).FirstOrDefault();
+        if (latest is null)
+        {
+            _status = "No backup to restore.";
+            return;
+        }
+        await RestoreAsync(latest);
+    }
+
+    private async Task RestoreAsync(BackupInfo backup)
+    {
+        if (State.SelectedProfile is null) return;
+        _busy = true;
+        try
+        {
+            var profile = State.SelectedProfile;
+            var res = await Task.Run(() => RestoreSvc.Restore(profile, backup.Path));
+            if (res.Success)
+            {
+                _status = $"Restored from {Path.GetFileName(backup.Path)} (safety backup taken).";
+                _showRestore = false;
+                await State.LoadAsync();
+            }
+            else
+            {
+                _status = $"Restore failed: {res.Error}";
+            }
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        await JS.InvokeVoidAsync("epmCopy", text);
+        _status = "Copied to clipboard.";
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        _dark = !_dark;
+        await JS.InvokeVoidAsync("epmToggleTheme", _dark ? "dark" : "light");
+    }
+
+    private string _refreshLabel()
+        => RefreshSvc.LastRefresh is null
+            ? (RefreshSvc.IsRefreshing ? "refreshing…" : "not yet")
+            : $"{RefreshSvc.LastRefresh:yyyy-MM-dd HH:mm} — {RefreshSvc.LastStatus}";
+
+    private static string Fmt(DateTimeOffset? d)
+        => d is null ? "—" : d.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+
+    private MarkupString Sort(SortColumn col)
+        => State.Sort == col
+            ? new MarkupString(State.SortDescending ? " ▼" : " ▲")
+            : new MarkupString(string.Empty);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}
