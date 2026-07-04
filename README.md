@@ -12,7 +12,7 @@ A local, containerized admin tool for **bulk-managing the passwords Microsoft Ed
 
 ## What it does
 
-- **Profile discovery** — finds every Edge profile (Default, Profile 1, …) in the mounted `User Data` folder, across Stable/Beta/Dev.
+- **Profile & store discovery** — finds every Edge profile (Default, Profile 1, …) in the mounted `User Data` folder, across Stable/Beta/Dev, and every login database within each profile (see *Multiple login stores* below).
 - **List saved logins** — origin URL, sign-on realm, username, created/last-used dates, times-used. Sortable grid, async loading.
 - **Powerful filtering** — free-text, site/realm substring, username substring, duplicates-only, and **category** (adult, etc.).
 - **Category tagging via blocklists** — loads domain blocklists and tags each entry (e.g. `adult`). Ships with a starter list and auto-loads any list you add.
@@ -40,6 +40,24 @@ Edge stores each saved login in a Chromium SQLite database named `Login Data` (t
 Because passwords are protected by DPAPI **and** app-bound encryption (tied to your Windows user and Edge's own process), **decryption is not possible from inside a Docker container** — and this tool deliberately does not attempt it. Your entire use case (searching and bulk-deleting by metadata) needs none of that, since all the metadata is plaintext.
 
 The tool operates on a **copy** of the DB for listing (so it can read even while Edge is open) and on the **live** DB only for deletes/restores (which require Edge to be closed).
+
+### Multiple login stores per profile
+
+A single Edge profile can contain **several** login databases, and recent Edge builds do **not** always use the file named `Login Data`:
+
+| File | What it is |
+|------|-----------|
+| `Login Data` | Legacy/local store. On some installs this is stale. |
+| `Login Data New` | **The active store on recent Edge builds** — where newly saved logins actually go. |
+| `Login Data For Account` / `…For Account New` | Passwords tied to the signed-in Microsoft account (sync). |
+
+If you only read `Login Data`, you can miss entries that Edge is really using (and deleting from a stale file has no visible effect). This tool therefore:
+
+- **discovers every login DB** in each profile (excluding `*Backup*` and journal/WAL/SHM sidecars);
+- lists each as a selectable **store** showing its **last-modified timestamp**, and marks the newest as **● active**;
+- **defaults to the newest (active) store** so it "just works";
+- offers an **All stores (aggregate)** view; and
+- **routes every delete/backup/restore to the exact file** a row came from — so acting on the live store removes it from Edge, and you can still clean stale files deliberately.
 
 ### Schema handling
 The `logins` schema varies across Chromium versions. On load the tool runs `PRAGMA table_info(logins)` and:
@@ -125,7 +143,7 @@ A typical "clean out a category of saved logins" session:
 
 1. **Close Microsoft Edge completely.** Deletes and restores need exclusive write access to the DB. Check Task Manager for lingering `msedge.exe` processes. (Listing/filtering works even while Edge is open — it reads a copy.)
 2. **Open the UI** at http://localhost:8088.
-3. **Pick a profile** in the left panel (e.g. *Default*), or tick **All profiles (aggregate)** to work across every profile at once.
+3. **Pick a store** in the left panel. Each profile lists its login DBs with timestamps; the newest is marked **● active** and selected automatically (usually `Login Data New`). Tick **All stores (aggregate)** to work across every store at once.
 4. **Let the lists load.** The status bar shows totals; the *Category lists* panel shows how many domains are loaded and when they last refreshed. Hit **Refresh lists now** to pull the latest blocklists on demand.
 5. **Narrow it down** with the filters: free text, site/realm substring, username substring, **Category** (e.g. `adult`), or *Duplicates only*.
 6. **Select what to remove** using the selection helpers:

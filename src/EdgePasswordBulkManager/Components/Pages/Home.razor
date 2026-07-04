@@ -45,21 +45,32 @@
 <div class="layout">
     <aside class="sidebar">
         <section class="panel">
-            <h2>Profile</h2>
+            <h2>Profile / store</h2>
             <select class="input" @onchange="OnProfileChanged" disabled="@State.Aggregate">
-                <option value="">-- select a profile --</option>
-                @foreach (var p in State.Profiles)
+                <option value="">-- select a store --</option>
+                @foreach (var grp in State.Profiles.GroupBy(p => p.ProfileGroupKey))
                 {
-                    <option value="@p.Key" selected="@(State.SelectedProfile?.Key == p.Key)">@p.Label</option>
+                    <optgroup label="@grp.First().ProfileHeader">
+                        @foreach (var p in grp.OrderByDescending(s => s.LastModified))
+                        {
+                            <option value="@p.Key" selected="@(State.SelectedProfile?.Key == p.Key)">
+                                @p.StoreFile — @p.LastModified.ToString("yyyy-MM-dd HH:mm")@(IsNewest(p) ? "  ● active" : "")
+                            </option>
+                        }
+                    </optgroup>
                 }
             </select>
             <label class="check">
                 <input type="checkbox" checked="@State.Aggregate" @onchange="OnAggregateChanged" />
-                <span>All profiles (aggregate)</span>
+                <span>All stores (aggregate)</span>
             </label>
+            <p class="muted small">
+                Edge may keep several login DBs per profile. <strong>Login Data New</strong> is the active store on
+                recent Edge builds — the newest one is marked ● active and selected by default.
+            </p>
             @if (State.Profiles.Count == 0)
             {
-                <p class="muted small">No Edge profiles found. Check the mounted <code>User Data</code> path.</p>
+                <p class="muted small">No Edge stores found. Check the mounted <code>User Data</code> path.</p>
             }
             @if (State.LoadedFromCopy)
             {
@@ -184,7 +195,7 @@
         }
         else if (NoData)
         {
-            <div class="empty">Select an Edge profile (or "All profiles") to list saved logins.</div>
+            <div class="empty">Select an Edge store (or "All stores") to list saved logins.</div>
         }
         else
         {
@@ -255,7 +266,7 @@
 </div>
 
 <footer class="statusbar">
-    <span><strong>Profile:</strong> @(State.Aggregate ? "All profiles" : State.SelectedProfile?.Label ?? "—")</span>
+    <span><strong>Store:</strong> @(State.Aggregate ? "All stores" : State.SelectedProfile?.Label ?? "—")</span>
     <span><strong>Total:</strong> @State.TotalCount</span>
     <span><strong>Filtered:</strong> @State.FilteredCount</span>
     <span><strong>Selected:</strong> @State.SelectedCount</span>
@@ -430,10 +441,23 @@
     private bool NoData => (!State.Aggregate && State.SelectedProfile is null) || State.IsLoading;
     private bool AllVisibleSelected => State.Visible().Count > 0 && State.Visible().All(e => e.Selected);
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         State.Changed += OnStateChanged;
         State.Refresh();
+
+        // Default to the most recently modified store (the active one, e.g. "Login Data New").
+        if (!State.Aggregate && State.SelectedProfile is null && State.Profiles.Count > 0)
+        {
+            var newest = State.Profiles.OrderByDescending(p => p.LastModified).First();
+            await State.SelectProfileAsync(newest.Key);
+        }
+    }
+
+    private bool IsNewest(EdgeProfile p)
+    {
+        var group = State.Profiles.Where(x => x.ProfileGroupKey == p.ProfileGroupKey);
+        return group.OrderByDescending(x => x.LastModified).First().Key == p.Key;
     }
 
     private async void OnStateChanged() => await InvokeAsync(StateHasChanged);
@@ -578,7 +602,7 @@
         if (rows.Count == 0) rows = State.Visible().ToList();
 
         var profile = State.SelectedProfile
-            ?? new EdgeProfile { Channel = "all", FolderName = "profiles", DisplayName = "All", LoginDataPath = "" };
+            ?? new EdgeProfile { Channel = "all", FolderName = "profiles", DisplayName = "All", StoreFile = "stores", LoginDataPath = "" };
 
         var path = BackupSvc.ExportCsv(profile, rows);
         var bytes = await File.ReadAllBytesAsync(path);

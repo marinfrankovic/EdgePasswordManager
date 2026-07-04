@@ -41,32 +41,66 @@ public sealed class ProfileDiscoveryService
 
             foreach (var dir in EnumerateProfileDirectories(rootPath))
             {
-                var loginData = Path.Combine(dir, "Login Data");
-                if (!File.Exists(loginData))
-                {
-                    continue;
-                }
-
                 var folder = Path.GetFileName(dir);
                 var display = names.TryGetValue(folder, out var friendly) && !string.IsNullOrWhiteSpace(friendly)
                     ? friendly
                     : folder;
 
-                profiles.Add(new EdgeProfile
+                foreach (var storeFile in FindLoginStores(dir))
                 {
-                    Channel = root.Channel,
-                    FolderName = folder,
-                    DisplayName = display,
-                    LoginDataPath = loginData,
-                });
+                    var fullPath = Path.Combine(dir, storeFile);
+                    profiles.Add(new EdgeProfile
+                    {
+                        Channel = root.Channel,
+                        FolderName = folder,
+                        DisplayName = display,
+                        StoreFile = storeFile,
+                        LoginDataPath = fullPath,
+                        LastModified = new DateTimeOffset(File.GetLastWriteTime(fullPath)),
+                    });
+                }
             }
         }
 
-        _audit.Write("discover", $"found {profiles.Count} profile(s)");
+        _audit.Write("discover", $"found {profiles.Count} store(s)");
         return profiles
             .OrderBy(p => p.Channel)
             .ThenBy(p => p.FolderName, StringComparer.OrdinalIgnoreCase)
+            .ThenByDescending(p => p.LastModified)
             .ToList();
+    }
+
+    /// <summary>
+    /// Returns the login-store DB file names present in a profile directory. Chromium/Edge may
+    /// keep several: "Login Data", "Login Data New" (the active store on recent Edge builds),
+    /// and the account variants. Backups and journal/wal/shm sidecars are excluded.
+    /// </summary>
+    private static IEnumerable<string> FindLoginStores(string dir)
+    {
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(dir, "Login Data*");
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var path in files)
+        {
+            var name = Path.GetFileName(path);
+
+            if (name.Contains("Backup", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("-journal", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            yield return name;
+        }
     }
 
     private static IEnumerable<string> EnumerateProfileDirectories(string root)

@@ -25,7 +25,7 @@ public sealed class BackupExportService
     {
         Directory.CreateDirectory(_options.BackupPath);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        var safeName = $"{profile.Channel}_{profile.FolderName}".Replace(Path.DirectorySeparatorChar, '_');
+        var safeName = SafeStoreName(profile);
         var dir = Path.Combine(_options.BackupPath, $"{safeName}_{stamp}");
         Directory.CreateDirectory(dir);
 
@@ -43,7 +43,7 @@ public sealed class BackupExportService
     {
         Directory.CreateDirectory(_options.ExportPath);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        var safeName = $"{profile.Channel}_{profile.FolderName}".Replace(Path.DirectorySeparatorChar, '_');
+        var safeName = SafeStoreName(profile);
         var file = Path.Combine(_options.ExportPath, $"{safeName}_{stamp}.csv");
 
         var sb = new StringBuilder();
@@ -76,6 +76,14 @@ public sealed class BackupExportService
         var needsQuote = value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r');
         var escaped = value.Replace("\"", "\"\"");
         return needsQuote ? $"\"{escaped}\"" : escaped;
+    }
+
+    /// <summary>Builds a filesystem-safe backup/export prefix that is unique per store.</summary>
+    public static string SafeStoreName(EdgeProfile profile)
+    {
+        var raw = $"{profile.Channel}_{profile.FolderName}_{profile.StoreFile}";
+        var chars = raw.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
+        return new string(chars);
     }
 
     private static void CopyIfExists(string src, string dst)

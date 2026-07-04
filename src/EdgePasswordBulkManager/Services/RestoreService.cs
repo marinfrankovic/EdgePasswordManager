@@ -36,7 +36,7 @@ public sealed class RestoreService
             return result;
         }
 
-        var prefix = $"{profile.Channel}_{profile.FolderName}_".Replace(Path.DirectorySeparatorChar, '_');
+        var prefix = BackupExportService.SafeStoreName(profile) + "_";
 
         foreach (var dir in Directory.EnumerateDirectories(_options.BackupPath))
         {
