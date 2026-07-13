@@ -14,11 +14,17 @@ RUN dotnet publish src/EdgePasswordBulkManager/EdgePasswordBulkManager.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_EnableDiagnostics=0
 
 COPY --from=build /app/publish ./
 EXPOSE 8080
+
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "EdgePasswordBulkManager.dll"]

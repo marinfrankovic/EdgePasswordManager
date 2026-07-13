@@ -76,6 +76,10 @@ EdgePassManager/
 ├─ compose.yaml
 ├─ .env.example
 ├─ README.md
+├─ CHANGELOG.md
+├─ docs/
+│  └─ RECOVERY.md
+├─ tests/EdgePasswordBulkManager.Tests/
 └─ src/EdgePasswordBulkManager/
    ├─ Program.cs
    ├─ appsettings.json
@@ -100,9 +104,20 @@ cp .env.example .env
 Edit `.env` and set `EDGE_USER_DATA` to your Edge `User Data` folder, e.g.
 ```
 EDGE_USER_DATA=C:\Users\<you>\AppData\Local\Microsoft\Edge\User Data
+BIND_ADDRESS=127.0.0.1
 HOST_PORT=8088
-READ_ONLY=false
+READ_ONLY=true
+EDGE_MOUNT_MODE=ro
 ```
+
+The defaults are a loopback-only, read-only preview. To enable backup, delete and restore operations, explicitly set both:
+
+```text
+READ_ONLY=false
+EDGE_MOUNT_MODE=rw
+```
+
+The application does not include LAN authentication. Keep `BIND_ADDRESS=127.0.0.1` unless a trusted firewall or authenticated reverse proxy protects the port. To deliberately publish it on all interfaces, set `BIND_ADDRESS=0.0.0.0`.
 
 ### 2. Run
 ```bash
@@ -120,6 +135,7 @@ docker pull mfrankovic/edge-password-manager:latest
 docker compose logs -f       # logs
 docker compose down          # stop
 docker compose up --build -d # rebuild after changes
+docker compose ps            # includes container health status
 ```
 
 Persisted host folders (created next to `compose.yaml`):
@@ -128,12 +144,21 @@ Persisted host folders (created next to `compose.yaml`):
 - `data/lists`   — downloaded + uploaded blocklists
 - `data/logs`    — audit log
 
+The container runs as the non-root .NET `app` account (UID 1654). Docker Desktop handles Windows bind-mount access. On Linux, create and restrict the persisted directories before startup:
+
+```bash
+mkdir -p data/{backups,exports,logs,lists}
+chown -R 1654:1654 data
+chmod -R u=rwX,go= data
+```
+
 ### Run locally without Docker (dev)
 ```bash
 cd src/EdgePasswordBulkManager
 dotnet run
 ```
 Development config reads Edge from `%LOCALAPPDATA%\Microsoft\Edge\User Data` and writes artifacts under `./data`.
+Edge database writes remain disabled by default; override `EdgePassManager__ReadOnlyMode=false` only for intentional local write testing.
 
 ---
 
@@ -183,10 +208,13 @@ Add another category by editing `appsettings.json`:
 ## Safety & privacy
 
 - **Close Edge before deleting/restoring.** The DB is locked while Edge runs; the tool detects the lock and tells you.
-- Every delete/restore takes an automatic **timestamped backup** first; deletes run inside a **transaction** and roll back on error.
+- Every delete/restore takes a unique, consistent SQLite snapshot first. Snapshots and staged restores must pass `PRAGMA integrity_check`; deletes run inside a transaction and roll back on error.
 - **No passwords** are ever decrypted, displayed, exported, or logged. CSV export and the audit log contain metadata only.
-- Only your own machine and your own LAN are involved. Blocklist URLs are the only outbound requests (public files), and only when auto-refresh/refresh-now runs.
-- `ReadOnlyMode` disables all writes for a look-but-don't-touch deployment.
+- The default Docker binding is loopback-only. Blocklist URLs are the only outbound requests and must remain on HTTPS.
+- `ReadOnlyMode` and the read-only Edge bind mount are enabled by default for a look-but-don't-touch deployment.
+- Downloaded and uploaded lists are limited to 30 MiB and 2 million unique valid domains by default.
+
+See [Backup and recovery](docs/RECOVERY.md) for the normal and emergency restore procedures.
 
 ---
 
@@ -202,3 +230,12 @@ Add another category by editing `appsettings.json`:
 ## Tech
 
 .NET 8 · Blazor Server (interactive) · `Microsoft.Data.Sqlite` · Docker (Linux container). No third-party vault logic, no browser extension, no cloud services.
+
+## Tests
+
+The regression suite uses temporary SQLite databases to cover modern and legacy deletion keys, dry safety controls, transaction rollback, WAL snapshots, unique backups, restore integrity, domain parsing, list-size enforcement and concurrent refresh protection.
+
+```bash
+dotnet test EdgePasswordBulkManager.sln -c Release
+dotnet list EdgePasswordBulkManager.sln package --vulnerable --include-transitive
+```

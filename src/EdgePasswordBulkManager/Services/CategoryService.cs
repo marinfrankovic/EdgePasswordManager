@@ -17,6 +17,7 @@ public sealed class CategoryService
     private readonly ILogger<CategoryService> _logger;
 
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _importGate = new(1, 1);
     private Dictionary<string, HashSet<string>> _categories = new(StringComparer.OrdinalIgnoreCase);
 
     public CategoryService(IOptions<AppOptions> options, AuditLog audit, ILogger<CategoryService> logger)
@@ -131,21 +132,48 @@ public sealed class CategoryService
     /// <summary>Saves an uploaded list into the list directory under a category, then reloads.</summary>
     public async Task<(int domains, int total)> ImportAsync(string category, string fileName, Stream content)
     {
-        Directory.CreateDirectory(_options.ListDirectory);
-        var safeCat = Sanitize(string.IsNullOrWhiteSpace(category) ? _options.DefaultCategory : category);
-        var safeName = Sanitize(Path.GetFileNameWithoutExtension(fileName));
-        var dest = Path.Combine(_options.ListDirectory, $"{safeCat}__upload-{safeName}.txt");
-
-        await using (var fs = File.Create(dest))
+        await _importGate.WaitAsync();
+        try
         {
-            await content.CopyToAsync(fs);
-        }
+            Directory.CreateDirectory(_options.ListDirectory);
+            var safeCat = Sanitize(string.IsNullOrWhiteSpace(category) ? _options.DefaultCategory : category);
+            var safeName = Sanitize(Path.GetFileNameWithoutExtension(fileName));
+            var dest = Path.Combine(_options.ListDirectory, $"{safeCat}__upload-{safeName}.txt");
+            var tmp = dest + $".tmp-{Guid.NewGuid():N}";
 
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var added = DomainListParser.LoadFileInto(dest, set);
-        Reload();
-        _audit.Write("category-import", $"{safeCat} <- {fileName} ({added} domains)");
-        return (added, TotalDomains);
+            try
+            {
+                await using (var output = File.Create(tmp))
+                {
+                    await CopyWithLimitAsync(content, output, _options.MaxListBytes);
+                    await output.FlushAsync();
+                }
+
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var added = DomainListParser.LoadFileInto(tmp, set);
+                if (added == 0 || added > _options.MaxListDomains)
+                {
+                    throw new InvalidDataException(
+                        $"Uploaded list contains {added:N0} valid domains; expected 1-{_options.MaxListDomains:N0}.");
+                }
+
+                File.Move(tmp, dest, overwrite: true);
+                Reload();
+                _audit.Write("category-import", $"{safeCat} <- {fileName} ({added} domains)");
+                return (added, TotalDomains);
+            }
+            finally
+            {
+                if (File.Exists(tmp))
+                {
+                    File.Delete(tmp);
+                }
+            }
+        }
+        finally
+        {
+            _importGate.Release();
+        }
     }
 
     private void SafeLoad(string path, HashSet<string> into)
@@ -168,5 +196,22 @@ public sealed class CategoryService
         var chars = value.Select(c => char.IsLetterOrDigit(c) || c is '-' ? c : '-').ToArray();
         var s = new string(chars).Trim('-').ToLowerInvariant();
         return string.IsNullOrEmpty(s) ? "list" : s;
+    }
+
+    private static async Task CopyWithLimitAsync(Stream source, Stream destination, long maxBytes)
+    {
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+            {
+                throw new InvalidDataException($"Uploaded list exceeds the {maxBytes:N0}-byte limit.");
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read));
+        }
     }
 }

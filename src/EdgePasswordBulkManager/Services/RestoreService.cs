@@ -48,8 +48,10 @@ public sealed class RestoreService
 
             var stampPart = name[prefix.Length..];
             DateTimeOffset when = Directory.GetLastWriteTime(dir);
-            if (DateTime.TryParseExact(stampPart, "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out var parsed))
+                var timestamp = stampPart.Length >= 19 ? stampPart[..19] : stampPart;
+                var format = timestamp.Length == 19 ? "yyyyMMdd-HHmmss-fff" : "yyyyMMdd-HHmmss";
+                if (DateTime.TryParseExact(timestamp, format, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var parsed))
             {
                 when = new DateTimeOffset(parsed);
             }
@@ -93,9 +95,9 @@ public sealed class RestoreService
         try
         {
             var target = profile.LoginDataPath;
-            File.Copy(source, target, overwrite: true);
-            SyncSidecar(source + "-wal", target + "-wal");
-            SyncSidecar(source + "-shm", target + "-shm");
+            BackupExportService.ValidateDatabase(source);
+            EnsureExclusiveAccess(target);
+            ReplaceDatabase(source, target);
 
             _audit.Write("restore", $"{profile.Key} <- {backupDir} (safety {safety})");
             return new RestoreResult { Success = true, SafetyBackupPath = safety };
@@ -116,16 +118,91 @@ public sealed class RestoreService
         }
     }
 
-    private static void SyncSidecar(string src, string dst)
+    private static void EnsureExclusiveAccess(string path)
     {
-        if (File.Exists(src))
+        var builder = new SqliteConnectionStringBuilder
         {
-            File.Copy(src, dst, overwrite: true);
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        };
+        using var connection = new SqliteConnection(builder.ConnectionString);
+        connection.Open();
+        using (var begin = connection.CreateCommand())
+        {
+            begin.CommandText = "BEGIN EXCLUSIVE;";
+            begin.ExecuteNonQuery();
         }
-        else if (File.Exists(dst))
+        using var rollback = connection.CreateCommand();
+        rollback.CommandText = "ROLLBACK;";
+        rollback.ExecuteNonQuery();
+    }
+
+    private static void ReplaceDatabase(string source, string target)
+    {
+        var token = Guid.NewGuid().ToString("N");
+        var staged = target + $".restore-{token}";
+        var rollback = target + $".rollback-{token}";
+        var rollbackWal = rollback + "-wal";
+        var rollbackShm = rollback + "-shm";
+        var originalMoved = false;
+
+        BackupExportService.CreateSnapshot(source, staged);
+
+        try
         {
-            // Remove a stale sidecar so it can't override the restored main DB.
-            File.Delete(dst);
+            MoveRequired(target, rollback, "stage the current database for rollback");
+            originalMoved = true;
+            MoveIfExists(target + "-wal", rollbackWal);
+            MoveIfExists(target + "-shm", rollbackShm);
+            MoveRequired(staged, target, "activate the restored database");
+            BackupExportService.ValidateDatabase(target);
+            DeleteIfExists(rollback);
+            DeleteIfExists(rollbackWal);
+            DeleteIfExists(rollbackShm);
+        }
+        catch
+        {
+            if (originalMoved)
+            {
+                DeleteIfExists(target);
+                MoveIfExists(rollback, target);
+                MoveIfExists(rollbackWal, target + "-wal");
+                MoveIfExists(rollbackShm, target + "-shm");
+            }
+            throw;
+        }
+        finally
+        {
+            DeleteIfExists(staged);
+        }
+    }
+
+    private static void MoveIfExists(string source, string target)
+    {
+        if (File.Exists(source))
+        {
+            File.Move(source, target, overwrite: true);
+        }
+    }
+
+    private static void MoveRequired(string source, string target, string operation)
+    {
+        try
+        {
+            File.Move(source, target);
+        }
+        catch (IOException ex)
+        {
+            throw new IOException($"Could not {operation}: {ex.Message}", ex);
+        }
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
         }
     }
 }

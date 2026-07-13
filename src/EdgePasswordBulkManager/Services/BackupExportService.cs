@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using EdgePasswordBulkManager.Models;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
 namespace EdgePasswordBulkManager.Services;
@@ -20,19 +21,25 @@ public sealed class BackupExportService
         _audit = audit;
     }
 
-    /// <summary>Copies the Login Data DB (and WAL/SHM sidecars) into a timestamped backup folder.</summary>
+    /// <summary>Creates a consistent SQLite snapshot in a unique timestamped backup folder.</summary>
     public string BackupLoginData(EdgeProfile profile)
     {
         Directory.CreateDirectory(_options.BackupPath);
-        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
         var safeName = SafeStoreName(profile);
-        var dir = Path.Combine(_options.BackupPath, $"{safeName}_{stamp}");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var dir = Path.Combine(_options.BackupPath, $"{safeName}_{stamp}-{suffix}");
         Directory.CreateDirectory(dir);
 
-        var src = profile.LoginDataPath;
-        File.Copy(src, Path.Combine(dir, "Login Data"), overwrite: true);
-        CopyIfExists(src + "-wal", Path.Combine(dir, "Login Data-wal"));
-        CopyIfExists(src + "-shm", Path.Combine(dir, "Login Data-shm"));
+        try
+        {
+            CreateSnapshot(profile.LoginDataPath, Path.Combine(dir, "Login Data"));
+        }
+        catch
+        {
+            Directory.Delete(dir, recursive: true);
+            throw;
+        }
 
         _audit.Write("backup", dir);
         return dir;
@@ -86,11 +93,50 @@ public sealed class BackupExportService
         return new string(chars);
     }
 
-    private static void CopyIfExists(string src, string dst)
+    public static void CreateSnapshot(string sourcePath, string destinationPath)
     {
-        if (File.Exists(src))
+        var sourceBuilder = new SqliteConnectionStringBuilder
         {
-            File.Copy(src, dst, overwrite: true);
+            DataSource = sourcePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        };
+        var destinationBuilder = new SqliteConnectionStringBuilder
+        {
+            DataSource = destinationPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        };
+
+        using var source = new SqliteConnection(sourceBuilder.ConnectionString);
+        using var destination = new SqliteConnection(destinationBuilder.ConnectionString);
+        source.Open();
+        destination.Open();
+        source.BackupDatabase(destination);
+        ValidateDatabase(destination);
+    }
+
+    public static void ValidateDatabase(string path)
+    {
+        var builder = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        };
+        using var connection = new SqliteConnection(builder.ConnectionString);
+        connection.Open();
+        ValidateDatabase(connection);
+    }
+
+    private static void ValidateDatabase(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA integrity_check;";
+        var result = Convert.ToString(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"SQLite integrity check failed: {result ?? "no result"}");
         }
     }
 }

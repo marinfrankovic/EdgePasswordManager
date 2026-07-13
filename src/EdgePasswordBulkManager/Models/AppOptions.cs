@@ -38,11 +38,17 @@ public sealed class AppOptions
     /// <summary>How often the background refresh downloads category URLs.</summary>
     public int RefreshIntervalHours { get; set; } = 24;
 
+    /// <summary>Maximum size accepted for a downloaded or uploaded category list.</summary>
+    public long MaxListBytes { get; set; } = 30 * 1024 * 1024;
+
+    /// <summary>Maximum number of unique valid domains accepted in one category list.</summary>
+    public int MaxListDomains { get; set; } = 2_000_000;
+
     /// <summary>Deletes above this count require typed confirmation in the UI.</summary>
     public int LargeDeleteThreshold { get; set; } = 25;
 
     /// <summary>When true the app refuses all write/delete/restore operations.</summary>
-    public bool ReadOnlyMode { get; set; } = false;
+    public bool ReadOnlyMode { get; set; } = true;
 }
 
 public sealed class EdgeDataRoot

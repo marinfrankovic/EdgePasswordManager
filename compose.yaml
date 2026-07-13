@@ -6,7 +6,7 @@ services:
     image: mfrankovic/edge-password-manager:latest
     container_name: edge-pass-manager
     ports:
-      - "${HOST_PORT:-8088}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8088}:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       EdgePassManager__EdgeDataRoots__0__Channel: "Stable"
@@ -18,15 +18,23 @@ services:
       EdgePassManager__ListDirectory: "/data/lists"
       EdgePassManager__AutoRefreshEnabled: "true"
       EdgePassManager__RefreshIntervalHours: "24"
+      EdgePassManager__MaxListBytes: "31457280"
+      EdgePassManager__MaxListDomains: "2000000"
       EdgePassManager__LargeDeleteThreshold: "25"
-      EdgePassManager__ReadOnlyMode: "${READ_ONLY:-false}"
+      EdgePassManager__ReadOnlyMode: "${READ_ONLY:-true}"
     volumes:
       # Bind-mount your Edge "User Data" directory. Mount read-write for delete/restore,
-      # or append ":ro" for pure preview. Path comes from the .env file.
-      - "${EDGE_USER_DATA}:/edge-data"
+      # or read-only for pure preview. Path and mode come from the .env file.
+      - "${EDGE_USER_DATA}:/edge-data:${EDGE_MOUNT_MODE:-ro}"
       # Persisted app artifacts on the host.
       - ./data/backups:/data/backups
       - ./data/exports:/data/exports
       - ./data/logs:/data/logs
       - ./data/lists:/data/lists
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped

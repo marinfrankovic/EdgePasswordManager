@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace EdgePasswordBulkManager.Helpers;
 
 /// <summary>
@@ -37,7 +39,20 @@ public static class DomainListParser
             domain = domain[4..];
         }
 
-        if (!domain.Contains('.') || domain.Contains('/') || domain is "localhost" or "local" or "localhost.localdomain")
+        if (domain.Length > 253 ||
+            !domain.Contains('.') ||
+            domain.Contains('/') ||
+            domain is "localhost" or "local" or "localhost.localdomain" ||
+            IPAddress.TryParse(domain, out _) ||
+            Uri.CheckHostName(domain) != UriHostNameType.Dns)
+        {
+            return null;
+        }
+
+        var labels = domain.Split('.');
+        if (labels.Any(label => label.Length is 0 or > 63 ||
+                                label[0] == '-' ||
+                                label[^1] == '-'))
         {
             return null;
         }

@@ -523,7 +523,7 @@
     {
         try
         {
-            await using var s = e.File.OpenReadStream(maxAllowedSize: 104_857_600);
+            await using var s = e.File.OpenReadStream(maxAllowedSize: Options.Value.MaxListBytes);
             var n = await State.SelectByDomainsAsync(s);
             _status = $"Selected {n} entr(y/ies) matching uploaded domain list.";
         }
@@ -537,7 +537,7 @@
     {
         try
         {
-            await using var s = e.File.OpenReadStream(maxAllowedSize: 104_857_600);
+            await using var s = e.File.OpenReadStream(maxAllowedSize: Options.Value.MaxListBytes);
             var (added, total) = await State.ImportCategoryAsync(_uploadCategory, e.File.Name, s);
             _listMsg = $"Imported {added:N0} domains into '{_uploadCategory}'. Total now {total:N0}.";
         }

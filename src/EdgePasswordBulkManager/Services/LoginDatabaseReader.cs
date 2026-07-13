@@ -111,7 +111,7 @@ public sealed class LoginDatabaseReader
         };
 
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT {string.Join(", ", select)} FROM logins;";
+        cmd.CommandText = $"SELECT {string.Join(", ", select)} FROM logins;"; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- projection fragments are hard-coded above
 
         var list = new List<LoginEntry>();
         using var reader = cmd.ExecuteReader();
@@ -185,6 +185,7 @@ public sealed class LoginDatabaseReader
         }
         catch (Exception ex)
         {
+            TryDelete(dest);
             _logger.LogWarning(ex, "Could not copy Login Data; reading original in read-only mode");
             warning = "Could not create a working copy; read directly in read-only mode.";
             usedCopy = false;

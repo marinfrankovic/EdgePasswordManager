@@ -138,6 +138,13 @@ public sealed class DeleteService
                     var where = BuildWhere(cmd, row, schema);
                     cmd.CommandText = $"DELETE FROM logins WHERE {where};";
                     var affected = cmd.ExecuteNonQuery();
+                    if (affected == 0)
+                    {
+                        _logger.LogWarning(
+                            "Delete matched no rows for profile {ProfileKey}, row {RowKey}",
+                            profile.Key,
+                            row.RowKey);
+                    }
 
                     perRow.Add(new DeleteRowResult
                     {

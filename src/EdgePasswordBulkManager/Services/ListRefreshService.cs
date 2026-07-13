@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using EdgePasswordBulkManager.Helpers;
 using EdgePasswordBulkManager.Models;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +17,7 @@ public sealed class ListRefreshService : BackgroundService
     private readonly IHttpClientFactory _httpFactory;
     private readonly AuditLog _audit;
     private readonly ILogger<ListRefreshService> _logger;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
 
     public ListRefreshService(
         IOptions<AppOptions> options,
@@ -33,7 +35,7 @@ public sealed class ListRefreshService : BackgroundService
 
     public DateTimeOffset? LastRefresh { get; private set; }
     public string LastStatus { get; private set; } = "not run yet";
-    public bool IsRefreshing { get; private set; }
+    public bool IsRefreshing => _refreshGate.CurrentCount == 0;
 
     public static string FileNameForUrl(string category, string url)
     {
@@ -53,12 +55,11 @@ public sealed class ListRefreshService : BackgroundService
     /// <summary>Downloads stale/missing URLs (or all when forced), then reloads categories.</summary>
     public async Task<string> RefreshNowAsync(bool force, CancellationToken ct)
     {
-        if (IsRefreshing)
+        if (!await _refreshGate.WaitAsync(0, ct))
         {
             return "already refreshing";
         }
 
-        IsRefreshing = true;
         var downloaded = 0;
         var failed = 0;
         try
@@ -87,13 +88,64 @@ public sealed class ListRefreshService : BackgroundService
 
                     try
                     {
-                        var tmp = target + ".tmp";
-                        await using (var resp = await client.GetStreamAsync(url, ct))
-                        await using (var fs = File.Create(tmp))
+                        if (!Uri.TryCreate(url, UriKind.Absolute, out var requestedUri) ||
+                            requestedUri.Scheme != Uri.UriSchemeHttps)
                         {
-                            await resp.CopyToAsync(fs, ct);
+                            throw new InvalidOperationException("Category list URLs must use HTTPS.");
                         }
-                        File.Move(tmp, target, overwrite: true);
+
+                        var tmp = target + $".tmp-{Guid.NewGuid():N}";
+                        try
+                        {
+                            using var response = await client.GetAsync(
+                                requestedUri, HttpCompletionOption.ResponseHeadersRead, ct);
+                            response.EnsureSuccessStatusCode();
+
+                            var finalUri = response.RequestMessage?.RequestUri;
+                            if (finalUri is null || finalUri.Scheme != Uri.UriSchemeHttps)
+                            {
+                                throw new InvalidOperationException("Category list redirects must remain on HTTPS.");
+                            }
+
+                            var contentLength = response.Content.Headers.ContentLength;
+                            if (contentLength > _options.MaxListBytes)
+                            {
+                                throw new InvalidDataException(
+                                    $"Category list exceeds the {_options.MaxListBytes:N0}-byte limit.");
+                            }
+
+                            var mediaType = response.Content.Headers.ContentType?.MediaType;
+                            if (mediaType is not null &&
+                                !mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) &&
+                                !mediaType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidDataException($"Unsupported category list content type: {mediaType}");
+                            }
+
+                            await using var responseStream = await response.Content.ReadAsStreamAsync(ct);
+                            await using (var output = File.Create(tmp))
+                            {
+                                await CopyWithLimitAsync(responseStream, output, _options.MaxListBytes, ct);
+                                await output.FlushAsync(ct);
+                            }
+
+                            var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            var validDomains = DomainListParser.LoadFileInto(tmp, domains);
+                            if (validDomains == 0 || validDomains > _options.MaxListDomains)
+                            {
+                                throw new InvalidDataException(
+                                    $"Category list contains {validDomains:N0} valid domains; expected 1-{_options.MaxListDomains:N0}.");
+                            }
+
+                            File.Move(tmp, target, overwrite: true);
+                        }
+                        finally
+                        {
+                            if (File.Exists(tmp))
+                            {
+                                File.Delete(tmp);
+                            }
+                        }
                         downloaded++;
                         _audit.Write("list-download", $"{def.Name} <- {url}");
                     }
@@ -116,7 +168,7 @@ public sealed class ListRefreshService : BackgroundService
         }
         finally
         {
-            IsRefreshing = false;
+            _refreshGate.Release();
         }
     }
 
@@ -150,6 +202,24 @@ public sealed class ListRefreshService : BackgroundService
             {
                 break;
             }
+        }
+    }
+
+    private static async Task CopyWithLimitAsync(
+        Stream source, Stream destination, long maxBytes, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            total += read;
+            if (total > maxBytes)
+            {
+                throw new InvalidDataException($"Category list exceeds the {maxBytes:N0}-byte limit.");
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
     }
 }
