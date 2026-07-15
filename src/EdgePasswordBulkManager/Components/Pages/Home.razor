@@ -170,7 +170,7 @@
             </h2>
             @if (_showUpdates)
             {
-                <p class="small"><strong>Installed:</strong> v@UpdateChecker.CurrentVersion</p>
+                <p class="small"><strong>Installed:</strong> v@(UpdateChecker.CurrentVersion)</p>
                 <label class="check update-opt-in">
                     <input type="checkbox" checked="@_autoUpdateCheck" @onchange="SetAutoUpdateCheckAsync" />
                     <span>Check automatically when this page opens</span>
@@ -189,7 +189,7 @@
                     else if (_updateResult.UpdateAvailable)
                     {
                         <div class="update-available">
-                            <p class="small"><strong>v@_updateResult.LatestVersion is available.</strong></p>
+                            <p class="small"><strong>v@(_updateResult.LatestVersion) is available.</strong></p>
                             @if (!string.IsNullOrWhiteSpace(_updateResult.ReleaseNotes))
                             {
                                 <div class="release-notes small">@_updateResult.ReleaseNotes</div>
@@ -211,7 +211,7 @@
                     }
                     else
                     {
-                        <p class="small update-current">You have the latest version (v@_updateResult.CurrentVersion).</p>
+                        <p class="small update-current">You have the latest version (v@(_updateResult.CurrentVersion)).</p>
                     }
                 }
             }

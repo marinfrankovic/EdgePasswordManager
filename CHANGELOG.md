@@ -2,6 +2,12 @@
 
 All notable changes to Edge Password Bulk Manager are documented here.
 
+## 1.1.1 - 2026-07-15
+
+### Fixed
+
+- Fixed installed and available version labels rendering as literal Razor expressions in the update panel.
+
 ## 1.1.0 - 2026-07-15
 
 ### Updates
