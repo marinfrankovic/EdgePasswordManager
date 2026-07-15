@@ -34,6 +34,8 @@
         window.epmToggleTheme = (theme) => {
             document.documentElement.setAttribute('data-theme', theme);
         };
+        window.epmGetAutoUpdateCheck = () => localStorage.getItem('epm-auto-update-check') === 'true';
+        window.epmSetAutoUpdateCheck = (enabled) => localStorage.setItem('epm-auto-update-check', enabled ? 'true' : 'false');
     </script>
 </body>
 </html>

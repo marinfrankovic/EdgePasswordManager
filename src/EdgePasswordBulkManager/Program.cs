@@ -8,6 +8,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.SectionName));
 
 builder.Services.AddHttpClient("lists", c => c.Timeout = TimeSpan.FromMinutes(3));
+builder.Services.AddHttpClient<UpdateCheckService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("EdgePasswordBulkManager/1.1");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
 
 builder.Services.AddSingleton<AuditLog>();
 builder.Services.AddSingleton<ProfileDiscoveryService>();

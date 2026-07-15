@@ -6,6 +6,7 @@
 @inject ListRefreshService RefreshSvc
 @inject CategoryService Categories
 @inject AuditLog Audit
+@inject UpdateCheckService UpdateChecker
 @inject Microsoft.Extensions.Options.IOptions<AppOptions> Options
 @inject IJSRuntime JS
 @implements IDisposable
@@ -159,6 +160,59 @@
                 {
                     <button class="btn full" @onclick="UndoLastDeleteAsync" disabled="@ReadOnly">↩ Undo last delete (restore latest)</button>
                     <button class="btn full" @onclick="OpenRestoreModal">🗄 Restore from backup…</button>
+                }
+            }
+        </section>
+
+        <section class="panel">
+            <h2 class="collapsible" @onclick="() => _showUpdates = !_showUpdates">
+                Application updates @(_showUpdates ? "▾" : "▸")
+            </h2>
+            @if (_showUpdates)
+            {
+                <p class="small"><strong>Installed:</strong> v@UpdateChecker.CurrentVersion</p>
+                <label class="check update-opt-in">
+                    <input type="checkbox" checked="@_autoUpdateCheck" @onchange="SetAutoUpdateCheckAsync" />
+                    <span>Check automatically when this page opens</span>
+                </label>
+                <p class="small muted">The preference stays in this browser. Updates are never downloaded or installed by the app.</p>
+                <button class="btn full" @onclick="CheckForUpdatesAsync" disabled="@_updateBusy">
+                    @(_updateBusy ? "Checking…" : "Check for updates")
+                </button>
+
+                @if (_updateResult is not null)
+                {
+                    @if (!string.IsNullOrEmpty(_updateResult.Error))
+                    {
+                        <p class="small muted">@_updateResult.Error</p>
+                    }
+                    else if (_updateResult.UpdateAvailable)
+                    {
+                        <div class="update-available">
+                            <p class="small"><strong>v@_updateResult.LatestVersion is available.</strong></p>
+                            @if (!string.IsNullOrWhiteSpace(_updateResult.ReleaseNotes))
+                            {
+                                <div class="release-notes small">@_updateResult.ReleaseNotes</div>
+                            }
+                            @if (!string.IsNullOrEmpty(_updateResult.ReleaseUrl))
+                            {
+                                <p class="small"><a href="@_updateResult.ReleaseUrl" target="_blank" rel="noopener noreferrer">View release on GitHub</a></p>
+                            }
+                            <p class="small muted">Run these commands in the folder containing <code>compose.yaml</code>:</p>
+                            <div class="update-command">
+                                <code>@PullCommand</code>
+                                <button class="mini" title="Copy pull command" @onclick="() => CopyAsync(PullCommand)">Copy</button>
+                            </div>
+                            <div class="update-command">
+                                <code>@RestartCommand</code>
+                                <button class="mini" title="Copy restart command" @onclick="() => CopyAsync(RestartCommand)">Copy</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="small update-current">You have the latest version (v@_updateResult.CurrentVersion).</p>
+                    }
                 }
             }
         </section>
@@ -423,10 +477,13 @@
     private bool _showDebug;
     private bool _showLists = true;
     private bool _showBackups;
+    private bool _showUpdates = true;
     private bool _showDelete;
     private bool _showRestore;
     private bool _busy;
     private bool _refreshBusy;
+    private bool _updateBusy;
+    private bool _autoUpdateCheck;
     private string _confirmText = string.Empty;
     private string _uploadCategory = "adult";
     private string? _status;
@@ -434,7 +491,11 @@
     private LoginEntry? _metaEntry;
     private DeleteResult? _dryRun;
     private DeleteResult? _result;
+    private UpdateCheckResult? _updateResult;
     private List<BackupInfo> _backups = new();
+
+    private const string PullCommand = "docker compose pull edge-pass-manager";
+    private const string RestartCommand = "docker compose up -d --no-deps edge-pass-manager";
 
     private bool ReadOnly => Options.Value.ReadOnlyMode;
     private int Threshold => Options.Value.LargeDeleteThreshold;
@@ -451,6 +512,21 @@
         {
             var newest = State.Profiles.OrderByDescending(p => p.LastModified).First();
             await State.SelectProfileAsync(newest.Key);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        _autoUpdateCheck = await JS.InvokeAsync<bool>("epmGetAutoUpdateCheck");
+        if (_autoUpdateCheck)
+        {
+            await CheckForUpdatesAsync();
+        }
+        else
+        {
+            StateHasChanged();
         }
     }
 
@@ -557,6 +633,29 @@
             _listMsg = $"Refresh: {status}";
         }
         finally { _refreshBusy = false; }
+    }
+
+    private async Task SetAutoUpdateCheckAsync(ChangeEventArgs e)
+    {
+        _autoUpdateCheck = e.Value is bool enabled && enabled;
+        await JS.InvokeVoidAsync("epmSetAutoUpdateCheck", _autoUpdateCheck);
+        if (_autoUpdateCheck && _updateResult is null)
+        {
+            await CheckForUpdatesAsync();
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        _updateBusy = true;
+        try
+        {
+            _updateResult = await UpdateChecker.CheckAsync();
+        }
+        finally
+        {
+            _updateBusy = false;
+        }
     }
 
     private void OpenDeleteModal()

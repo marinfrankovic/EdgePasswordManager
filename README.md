@@ -24,6 +24,7 @@ A local, containerized admin tool for **bulk-managing the passwords Microsoft Ed
 - **Cross-profile aggregate** — view and act across all profiles at once (deletes are routed to the correct profile DB).
 - **Export** — metadata-only CSV (never passwords).
 - **Stats & audit** — totals, adult/duplicate/insecure/never-used counts, and a local timestamped audit log (no plaintext passwords).
+- **Opt-in update checks** — manually check GitHub Releases, or opt in to checking when the page opens, then copy the displayed Docker Compose update commands.
 - **Dark/light mode**, read-only mode, schema/debug panel.
 
 ---
@@ -137,6 +138,26 @@ docker compose down          # stop
 docker compose up --build -d # rebuild after changes
 docker compose ps            # includes container health status
 ```
+
+### Check for application updates
+
+Open **Application updates** in the sidebar. The app shows its installed version and provides a manual **Check for updates** button. Automatic checks are disabled until you opt in; that preference is stored only in the current browser.
+
+The checker reads the latest stable release metadata from GitHub. It does not download an image, access Docker, or run commands. When an update is available, it displays the release notes and these copyable commands for you to run from the folder containing `compose.yaml`:
+
+```bash
+docker compose pull edge-pass-manager
+docker compose up -d --no-deps edge-pass-manager
+```
+
+Verify the updated container with:
+
+```bash
+docker compose ps
+docker compose logs --tail 50 edge-pass-manager
+```
+
+Stable releases use version tags such as `1.1.0` and update the `latest` image tag. Builds from `main` publish under `edge` and do not become customer updates.
 
 Persisted host folders (created next to `compose.yaml`):
 - `data/backups` — DB backups taken before deletes/restores

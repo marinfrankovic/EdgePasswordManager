@@ -2,6 +2,16 @@
 
 All notable changes to Edge Password Bulk Manager are documented here.
 
+## 1.1.0 - 2026-07-15
+
+### Updates
+
+- Added the installed application version and a manual GitHub Release update check to the sidebar.
+- Added an optional automatic check when the page opens. It is disabled by default and stored only in the customer's browser.
+- Added release notes, a GitHub release link and copyable Docker Compose update commands when a newer stable version exists.
+- Kept update installation fully manual: the app cannot access Docker, download images or execute host commands.
+- Changed Docker publishing so version tags update the stable `latest` image while `main` publishes the `edge` image.
+
 ## 2026-07-13 - Security, recovery and reliability hardening
 
 ### Security

@@ -106,6 +106,21 @@ html, body {
 }
 .input:focus { outline: none; border-color: var(--accent); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.update-opt-in { align-items: flex-start; margin-bottom: 6px; }
+.update-available { border-left: 3px solid var(--accent); padding-left: 9px; }
+.update-current { color: #45a86b; }
+.release-notes {
+    max-height: 120px; overflow: auto; margin: 8px 0; padding: 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.update-command {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px;
+    align-items: center; margin-top: 6px; padding: 6px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+}
+.update-command code { overflow-wrap: anywhere; font-size: 11px; }
+.panel a { color: var(--accent); }
 
 /* Grid */
 .grid-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: auto; }
