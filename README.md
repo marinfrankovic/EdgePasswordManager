@@ -157,7 +157,7 @@ docker compose ps
 docker compose logs --tail 50 edge-pass-manager
 ```
 
-Stable releases use version tags such as `1.1.0` and update the `latest` image tag. Builds from `main` publish under `edge` and do not become customer updates.
+Stable releases use version tags such as `1.1.2` and update the `latest` image tag. Builds from `main` publish under `edge` and do not become customer updates.
 
 Persisted host folders (created next to `compose.yaml`):
 - `data/backups` — DB backups taken before deletes/restores
@@ -230,6 +230,7 @@ Add another category by editing `appsettings.json`:
 
 - **Close Edge before deleting/restoring.** The DB is locked while Edge runs; the tool detects the lock and tells you.
 - Every delete/restore takes a unique, consistent SQLite snapshot first. Snapshots and staged restores must pass `PRAGMA integrity_check`; deletes run inside a transaction and roll back on error.
+- Source databases must also pass validation before backup. A `Page N: never used` integrity error blocks the operation; it does not mean a saved login is unused. See [integrity-error recovery](docs/RECOVERY.md#delete-blocked-by-an-integrity-error) before attempting repairs.
 - **No passwords** are ever decrypted, displayed, exported, or logged. CSV export and the audit log contain metadata only.
 - The default Docker binding is loopback-only. Blocklist URLs are the only outbound requests and must remain on HTTPS.
 - `ReadOnlyMode` and the read-only Edge bind mount are enabled by default for a look-but-don't-touch deployment.

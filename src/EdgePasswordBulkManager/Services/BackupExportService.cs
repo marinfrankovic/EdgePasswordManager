@@ -110,7 +110,20 @@ public sealed class BackupExportService
 
         using var source = new SqliteConnection(sourceBuilder.ConnectionString);
         using var destination = new SqliteConnection(destinationBuilder.ConnectionString);
-        source.Open();
+        try
+        {
+            source.Open();
+            ValidateDatabase(source);
+        }
+        catch (Exception ex) when (ex is InvalidDataException || ex is SqliteException { SqliteErrorCode: 11 or 26 })
+        {
+            throw new InvalidDataException(
+                "The source database failed SQLite validation; no changes were made to it. " +
+                "Close Edge completely and retry. If this persists, preserve the database and its " +
+                "-wal/-shm sidecars before recovery, then follow docs/RECOVERY.md. " +
+                "Do not bypass this check or repair the live store in place. " +
+                $"Details: {ex.Message}", ex);
+        }
         destination.Open();
         source.BackupDatabase(destination);
         ValidateDatabase(destination);

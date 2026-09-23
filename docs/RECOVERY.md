@@ -2,6 +2,25 @@
 
 Edge Password Bulk Manager creates an integrity-checked SQLite snapshot before every delete or restore. Backups are stored under `data/backups` by default. Each operation receives a unique directory, even when several operations run during the same second.
 
+## Delete blocked by an integrity error
+
+`Page N: never used` means SQLite found pages that belong to neither a database structure nor its free-page list. It is an integrity error, not a report of unused saved logins. Readable rows or a successful dry-run do not prove that the database is safe to modify.
+
+The application validates the source before creating a snapshot, then validates the snapshot. A message saying **the source database failed SQLite validation** identifies a source problem. The delete for that store is aborted without changing its rows; failed backup directories are removed. In an aggregate operation, other stores may have completed their own deletes.
+
+1. Close Edge completely, including background processes, and retry once. Confirm the exact profile and store selected in the app; do not assume the file is named `Login Data` rather than `Login Data New` or an account store.
+2. If validation still fails, stop write attempts. Stop the application/container and preserve the affected store and any matching `-wal` and `-shm` sidecars together in a separate safety directory. Keep this original copy unchanged and protect it as sensitive data.
+3. Check a working copy with a local SQLite client in read-only mode. Retain the original filenames so SQLite can find matching sidecars:
+
+   ```text
+   sqlite3 -readonly "path/to/working-copy/Login Data New" "PRAGMA integrity_check;"
+   ```
+
+4. Prefer a known-good backup of the **same profile and store** that returns `ok`. Follow **Emergency manual restore** below. The in-app restore may also refuse because it cannot create a validated safety backup of the damaged current database. Restoring an older backup loses subsequent local changes and may interact with Edge sync.
+5. If no valid backup exists, investigate recovery on a disposable copy only. A specialist can attempt a SQLite rebuild/recovery into a new database, but a clean integrity check alone does not prove every login, encrypted password blob, or Edge metadata record survived. Compare schema and data before considering replacement, and keep the original until Edge has been verified.
+
+Do not bypass validation, delete sidecars from the original, or run `VACUUM`, `REINDEX`, or SQLite recovery against the live store. The application does not automatically repair password databases. Its CSV export contains metadata only and cannot restore passwords.
+
 ## Preferred restore procedure
 
 1. Close Microsoft Edge completely, including background `msedge.exe` processes.

@@ -52,6 +52,43 @@ public sealed class DatabaseSafetyTests
     }
 
     [Fact]
+    public void Delete_RejectsOrphanedPagesWithoutChangingSource()
+    {
+        using var fixture = new ServiceTestFixture();
+        var database = fixture.CreateLoginDatabase();
+        ServiceTestFixture.InsertLogin(database, 1, "https://example.com");
+        using (var connection = new SqliteConnection($"Data Source={database};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE unused (payload BLOB); INSERT INTO unused VALUES (zeroblob(16384)); DROP TABLE unused;";
+            command.ExecuteNonQuery();
+        }
+
+        using (var stream = new FileStream(database, FileMode.Open, FileAccess.Write))
+        {
+            stream.Position = 32;
+            stream.Write(new byte[8]);
+        }
+        var original = File.ReadAllBytes(database);
+        var integrityError = Assert.Throws<InvalidDataException>(() => BackupExportService.ValidateDatabase(database));
+        Assert.Contains("never used", integrityError.Message);
+
+        var result = fixture.CreateDeleteService().Execute(
+            fixture.CreateProfile(database),
+            new[] { ServiceTestFixture.Entry(1, "https://example.com") },
+            dryRun: false);
+
+        Assert.False(result.Committed);
+        Assert.Empty(result.BackupPaths);
+        Assert.Contains("source database", result.FatalError, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("docs/RECOVERY.md", result.FatalError);
+        Assert.Equal(original, File.ReadAllBytes(database));
+        Assert.Equal(1, ServiceTestFixture.CountLogins(database));
+        Assert.Empty(Directory.EnumerateDirectories(fixture.Options.BackupPath));
+    }
+
+    [Fact]
     public void Restore_ReplacesDatabaseAndCreatesSafetyBackup()
     {
         using var fixture = new ServiceTestFixture();

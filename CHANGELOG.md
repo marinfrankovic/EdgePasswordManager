@@ -2,6 +2,19 @@
 
 All notable changes to Edge Password Bulk Manager are documented here.
 
+## 1.1.2 - 2026-09-23
+
+### Fixed
+
+- Validate source databases before creating backup snapshots and identify source integrity failures with recovery guidance.
+- Keep deletes blocked when SQLite reports orphaned pages; no automatic repair or validation bypass is performed.
+- Exclude nested runtime data and build output from Docker build contexts.
+
+### Testing and documentation
+
+- Added a regression test that reproduces orphaned pages and verifies the source remains byte-for-byte unchanged after a refused delete.
+- Documented integrity-error recovery, preservation of database sidecars, and aggregate-operation behavior.
+
 ## 1.1.1 - 2026-07-15
 
 ### Fixed
